@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Smart Soil Sense — Live Field Dashboard</title>
+
+    <!-- Type system: Space Grotesk for structure/labels, IBM Plex Mono for sensor readouts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet" />
+
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+    <!-- ============================================================
+       LOADING OVERLAY — shown until the first successful API call
+       ============================================================ -->
+    <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite">
+        <div class="loading-panel">
+            <div class="seed-spinner" aria-hidden="true">
+                <div class="seed-ring"></div>
+                <div class="seed-core"></div>
+            </div>
+            <p class="loading-title">Connecting to sensor node&hellip;</p>
+            <p class="loading-subtitle">Waiting for the first reading from the field.</p>
+        </div>
+    </div>
+
+    <!-- ============================================================
+       MAIN DASHBOARD — hidden until data has loaded successfully
+       ============================================================ -->
+    <div id="dashboard" class="dashboard" hidden>
+
+        <!-- Offline banner — only shown on failed fetches, never hides data -->
+        <div id="offline-banner" class="offline-banner" hidden role="alert">
+            <span class="offline-dot" aria-hidden="true"></span>
+            <span>Device Offline — last known readings shown below. Retrying every 5s&hellip;</span>
+        </div>
+
+        <header class="dash-header">
+            <div class="brand">
+                <span class="brand-mark" aria-hidden="true">🌱</span>
+                <div class="brand-text">
+                    <h1>Smart Soil Sense</h1>
+                    <p class="brand-sub">Field node readout</p>
+                </div>
+            </div>
+
+            <div class="header-meta">
+                <div class="status-pill" id="status-pill">
+                    <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+                    <span id="status-label">Connected</span>
+                </div>
+                <div class="last-updated">
+                    <span class="last-updated-label">Last updated</span>
+                    <span class="last-updated-value" id="last-updated-value">&mdash;</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Soil-profile divider: a signature strip evoking topsoil / subsoil / bedrock layers -->
+        <div class="soil-strata" aria-hidden="true"></div>
+
+        <!-- ============================================================
+         SENSOR CARD GRID
+         ============================================================ -->
+        <main class="card-grid">
+
+            <!-- Temperature -->
+            <section class="sensor-card" data-sensor="temperature">
+                <div class="card-top">
+                    <span class="card-icon" aria-hidden="true">🌡</span>
+                    <span class="card-label">Temperature</span>
+                </div>
+                <div class="card-value-row">
+                    <span class="card-value" id="value-temperature">&#8211;&#8211;</span>
+                    <span class="card-unit">°C</span>
+                </div>
+                <div class="range-bar" aria-hidden="true">
+                    <div class="range-bar-fill" id="range-temperature"></div>
+                </div>
+                <div class="range-labels" aria-hidden="true"><span>0°</span><span>50°</span></div>
+            </section>
+
+            <!-- Humidity -->
+            <section class="sensor-card" data-sensor="humidity">
+                <div class="card-top">
+                    <span class="card-icon" aria-hidden="true">💧</span>
+                    <span class="card-label">Humidity</span>
+                </div>
+                <div class="card-value-row">
+                    <span class="card-value" id="value-humidity">&#8211;&#8211;</span>
+                    <span class="card-unit">%</span>
+                </div>
+                <div class="range-bar" aria-hidden="true">
+                    <div class="range-bar-fill" id="range-humidity"></div>
+                </div>
+                <div class="range-labels" aria-hidden="true"><span>0%</span><span>100%</span></div>
+            </section>
+
+            <!-- Soil Moisture -->
+            <section class="sensor-card" data-sensor="soil_moisture">
+                <div class="card-top">
+                    <span class="card-icon" aria-hidden="true">🌱</span>
+                    <span class="card-label">Soil Moisture</span>
+                </div>
+                <div class="card-value-row">
+                    <span class="card-value" id="value-soil_moisture">&#8211;&#8211;</span>
+                    <span class="card-unit">raw</span>
+                </div>
+                <div class="range-bar" aria-hidden="true">
+                    <div class="range-bar-fill" id="range-soil_moisture"></div>
+                </div>
+                <div class="range-labels" aria-hidden="true"><span>0</span><span>1023</span></div>
+            </section>
+
+            <!-- Rain -->
+            <section class="sensor-card" data-sensor="rain">
+                <div class="card-top">
+                    <span class="card-icon" aria-hidden="true">🌧</span>
+                    <span class="card-label">Rain</span>
+                </div>
+                <div class="card-value-row">
+                    <span class="rain-badge" id="value-rain">&#8211;&#8211;</span>
+                </div>
+                <p class="rain-hint" id="rain-hint">Awaiting reading&hellip;</p>
+            </section>
+
+        </main>
+
+        <footer class="dash-footer">
+            <span id="endpoint-label"></span>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

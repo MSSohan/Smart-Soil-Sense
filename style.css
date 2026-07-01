@@ -1,0 +1,717 @@
+/* ============================================================
+   SMART SOIL SENSE — DESIGN TOKENS
+   Palette is drawn from a soil profile: dark loam background,
+   moss/leaf greens for life signals, amber/clay/water accents
+   per sensor, terracotta for alerts.
+   ============================================================ */
+:root {
+    /* --- Dark theme (default) --- */
+    --bg: #10130f;
+    --bg-elevated: #171b14;
+    --surface: #1b2017;
+    --surface-hover: #212819;
+    --border: #2c3324;
+    --border-soft: #232a1c;
+
+    --text: #edefe6;
+    --text-dim: #9ca48d;
+    --text-faint: #6d7461;
+
+    --accent-moss: #8fbf6e;
+    --accent-moss-strong: #7cb342;
+    --accent-temp: #e8a33d;
+    --accent-humidity: #4fb8d6;
+    --accent-soil: #c99a56;
+    --accent-live: #6fcf97;
+    --accent-offline: #e8654e;
+
+    --shadow-soft: 0 12px 28px -12px rgba(0, 0, 0, 0.55);
+    --shadow-hover: 0 20px 40px -14px rgba(0, 0, 0, 0.65);
+
+    --font-display: "Space Grotesk", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", "Courier New", monospace;
+
+    --radius-lg: 20px;
+    --radius-md: 14px;
+    --radius-sm: 8px;
+
+    color-scheme: dark;
+}
+
+/* --- Light theme, applied automatically by OS/browser preference --- */
+@media (prefers-color-scheme: light) {
+    :root {
+        --bg: #f1f3ea;
+        --bg-elevated: #ffffff;
+        --surface: #ffffff;
+        --surface-hover: #f7f8f2;
+        --border: #dde1d2;
+        --border-soft: #e7eadf;
+
+        --text: #1e2318;
+        --text-dim: #5c6350;
+        --text-faint: #8b9280;
+
+        --shadow-soft: 0 10px 24px -14px rgba(30, 35, 24, 0.18);
+        --shadow-hover: 0 18px 34px -16px rgba(30, 35, 24, 0.22);
+
+        color-scheme: light;
+    }
+}
+
+/* ============================================================
+     RESET & BASE
+     ============================================================ */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    height: 100%;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+    transition: background 0.3s ease, color 0.3s ease;
+    min-height: 100vh;
+    min-height: 100dvh;
+    /* Respect notches / home-indicator areas on modern phones */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+}
+
+/* subtle ambient texture: faint radial glow, keeps the dark bg from feeling flat */
+body {
+    background-image: radial-gradient(circle at 12% -10%,
+            rgba(143, 191, 110, 0.08),
+            transparent 45%);
+    background-attachment: fixed;
+}
+
+/* ============================================================
+     LOADING OVERLAY
+     ============================================================ */
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    z-index: 50;
+}
+
+.loading-panel {
+    text-align: center;
+    padding: 2rem;
+    width: min(90vw, 360px);
+}
+
+.seed-spinner {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 1.5rem;
+}
+
+.seed-ring {
+    position: absolute;
+    inset: 0;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent-moss-strong);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+}
+
+.seed-core {
+    position: absolute;
+    inset: 22px;
+    border-radius: 50%;
+    background: var(--accent-moss);
+    animation: pulse-core 1.8s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes pulse-core {
+
+    0%,
+    100% {
+        transform: scale(0.85);
+        opacity: 0.7;
+    }
+
+    50% {
+        transform: scale(1.1);
+        opacity: 1;
+    }
+}
+
+.loading-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.loading-subtitle {
+    margin-top: 0.4rem;
+    font-size: 0.88rem;
+    color: var(--text-dim);
+}
+
+/* ============================================================
+     DASHBOARD SHELL
+     ============================================================ */
+.dashboard {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem calc(3rem + env(safe-area-inset-bottom));
+}
+
+/* --- Offline banner --- */
+.offline-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: rgba(232, 101, 78, 0.12);
+    border: 1px solid rgba(232, 101, 78, 0.35);
+    color: var(--accent-offline);
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 0.7rem 1rem;
+    border-radius: var(--radius-sm);
+    margin-bottom: 1.25rem;
+    animation: banner-in 0.25s ease;
+}
+
+@keyframes banner-in {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.offline-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-offline);
+    flex-shrink: 0;
+    animation: dot-pulse 1.2s ease-in-out infinite;
+}
+
+/* ============================================================
+     HEADER
+     ============================================================ */
+.dash-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+}
+
+.brand-mark {
+    font-size: 1.9rem;
+    line-height: 1;
+}
+
+.brand-text h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.brand-sub {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin-top: 0.15rem;
+}
+
+.header-meta {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+}
+
+.status-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 0.45rem 0.85rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    box-shadow: var(--shadow-soft);
+}
+
+.status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent-live);
+    box-shadow: 0 0 0 0 rgba(111, 207, 151, 0.6);
+    animation: dot-pulse 2s ease-in-out infinite;
+}
+
+.status-dot.is-offline {
+    background: var(--accent-offline);
+    animation: dot-pulse-red 1.1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(111, 207, 151, 0.5);
+    }
+
+    70% {
+        box-shadow: 0 0 0 7px rgba(111, 207, 151, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(111, 207, 151, 0);
+    }
+}
+
+@keyframes dot-pulse-red {
+    0% {
+        box-shadow: 0 0 0 0 rgba(232, 101, 78, 0.55);
+    }
+
+    70% {
+        box-shadow: 0 0 0 7px rgba(232, 101, 78, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(232, 101, 78, 0);
+    }
+}
+
+.last-updated {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-size: 0.82rem;
+}
+
+.last-updated-label {
+    color: var(--text-faint);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.last-updated-value {
+    font-family: var(--font-mono);
+    color: var(--text);
+    margin-top: 0.15rem;
+}
+
+/* ============================================================
+     SIGNATURE ELEMENT: soil strata divider
+     Three bands evoke topsoil / subsoil / bedrock — a quiet nod
+     to the sensor's actual subject matter beneath a plain header.
+     ============================================================ */
+.soil-strata {
+    height: 6px;
+    border-radius: 999px;
+    margin: 1.5rem 0 1.75rem;
+    background: linear-gradient(90deg,
+            var(--accent-moss-strong) 0%,
+            var(--accent-moss-strong) 33%,
+            var(--accent-soil) 33%,
+            var(--accent-soil) 66%,
+            #5a4632 66%,
+            #5a4632 100%);
+    opacity: 0.55;
+}
+
+/* ============================================================
+     CARD GRID
+     ============================================================ */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.1rem;
+}
+
+.sensor-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.4rem 1.4rem 1.5rem;
+    box-shadow: var(--shadow-soft);
+    transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+    display: flex;
+    flex-direction: column;
+    min-height: 168px;
+}
+
+.sensor-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-hover);
+    border-color: var(--border-soft);
+    background: var(--surface-hover);
+}
+
+.card-top {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-bottom: 0.9rem;
+}
+
+.card-icon {
+    font-size: 1.15rem;
+}
+
+.card-label {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.card-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    margin-bottom: auto;
+}
+
+.card-value {
+    font-family: var(--font-mono);
+    font-size: 2.4rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1;
+}
+
+.card-unit {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    color: var(--text-faint);
+}
+
+/* per-sensor accent on the big number */
+[data-sensor="temperature"] .card-value {
+    color: var(--accent-temp);
+}
+
+[data-sensor="humidity"] .card-value {
+    color: var(--accent-humidity);
+}
+
+[data-sensor="soil_moisture"] .card-value {
+    color: var(--accent-moss);
+}
+
+/* --- Range bar: encodes where the reading sits in its typical range --- */
+.range-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--border-soft);
+    margin-top: 1.1rem;
+    overflow: hidden;
+}
+
+.range-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    transition: width 0.5s ease;
+}
+
+#range-temperature {
+    background: var(--accent-temp);
+}
+
+#range-humidity {
+    background: var(--accent-humidity);
+}
+
+#range-soil_moisture {
+    background: var(--accent-moss);
+}
+
+.range-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    margin-top: 0.35rem;
+}
+
+/* --- Rain badge --- */
+.rain-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.85rem;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    font-weight: 600;
+    background: var(--border-soft);
+    color: var(--text-dim);
+}
+
+.rain-badge.rain-yes {
+    background: rgba(79, 184, 214, 0.15);
+    color: var(--accent-humidity);
+}
+
+.rain-badge.rain-no {
+    background: rgba(143, 191, 110, 0.15);
+    color: var(--accent-moss);
+}
+
+.rain-hint {
+    margin-top: 0.9rem;
+    font-size: 0.8rem;
+    color: var(--text-faint);
+}
+
+/* ============================================================
+     FOOTER
+     ============================================================ */
+.dash-footer {
+    margin-top: 2rem;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-faint);
+}
+
+/* ============================================================
+     RESPONSIVE — TABLET
+     Two-column card grid, header still on one row where it fits.
+     ============================================================ */
+@media (max-width: 980px) {
+    .dashboard {
+        padding: 1.75rem 1.25rem calc(2.5rem + env(safe-area-inset-bottom));
+    }
+
+    .card-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+    }
+}
+
+/* ============================================================
+     RESPONSIVE — MOBILE (large phones down to small phones)
+     Header stacks into rows, status/timestamp become a full-width
+     row, cards go single-column, touch targets grow slightly.
+     ============================================================ */
+@media (max-width: 680px) {
+    .dashboard {
+        padding: 1.5rem 1rem calc(2.25rem + env(safe-area-inset-bottom));
+    }
+
+    .dash-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .brand-mark {
+        font-size: 1.7rem;
+    }
+
+    .brand-text h1 {
+        font-size: 1.3rem;
+    }
+
+    .header-meta {
+        width: 100%;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .status-pill {
+        padding: 0.5rem 0.9rem;
+        /* keep the pill a comfortable tap target even though it's not
+         interactive today — consistent with future-proofing the UI */
+        min-height: 34px;
+    }
+
+    .last-updated {
+        align-items: flex-end;
+        text-align: right;
+    }
+
+    .soil-strata {
+        margin: 1.25rem 0 1.4rem;
+    }
+
+    .card-grid {
+        grid-template-columns: 1fr;
+        gap: 0.85rem;
+    }
+
+    .sensor-card {
+        min-height: 0;
+        padding: 1.2rem 1.25rem 1.3rem;
+    }
+
+    .card-value {
+        font-size: 2.1rem;
+    }
+
+    .offline-banner {
+        font-size: 0.8rem;
+        padding: 0.65rem 0.85rem;
+        line-height: 1.35;
+    }
+
+    .loading-title {
+        font-size: 1rem;
+    }
+
+    .loading-subtitle {
+        font-size: 0.84rem;
+    }
+}
+
+/* ============================================================
+     RESPONSIVE — SMALL PHONES (≤400px)
+     Tighter type scale and spacing so nothing wraps awkwardly or
+     overflows on narrow devices (e.g. iPhone SE, small Android).
+     ============================================================ */
+@media (max-width: 400px) {
+    .dashboard {
+        padding: 1.25rem 0.85rem calc(2rem + env(safe-area-inset-bottom));
+    }
+
+    .brand {
+        gap: 0.6rem;
+    }
+
+    .brand-text h1 {
+        font-size: 1.15rem;
+    }
+
+    .brand-sub {
+        font-size: 0.76rem;
+    }
+
+    .header-meta {
+        flex-wrap: wrap;
+    }
+
+    .status-pill {
+        font-size: 0.76rem;
+        padding: 0.45rem 0.75rem;
+    }
+
+    .last-updated {
+        font-size: 0.76rem;
+    }
+
+    .card-value {
+        font-size: 1.9rem;
+    }
+
+    .card-icon {
+        font-size: 1.05rem;
+    }
+
+    .card-label {
+        font-size: 0.76rem;
+    }
+
+    .rain-badge {
+        font-size: 0.86rem;
+        padding: 0.35rem 0.75rem;
+    }
+}
+
+/* ============================================================
+     RESPONSIVE — LANDSCAPE PHONES (short viewport height)
+     Prevents the loading overlay and header from feeling cramped
+     when the phone is rotated sideways.
+     ============================================================ */
+@media (max-height: 420px) and (orientation: landscape) {
+    .loading-panel {
+        padding: 1rem;
+    }
+
+    .seed-spinner {
+        width: 44px;
+        height: 44px;
+        margin-bottom: 0.9rem;
+    }
+
+    .seed-core {
+        inset: 15px;
+    }
+
+    .dashboard {
+        padding-top: 1.25rem;
+    }
+
+    .card-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* Disable the hover lift on touch devices — hover state can get
+     "stuck" after a tap on touchscreens, which looks buggy. */
+@media (hover: none) {
+    .sensor-card:hover {
+        transform: none;
+        box-shadow: var(--shadow-soft);
+        border-color: var(--border);
+        background: var(--surface);
+    }
+
+    .sensor-card:active {
+        transform: scale(0.98);
+        background: var(--surface-hover);
+    }
+}
+
+
+:focus-visible {
+    outline: 2px solid var(--accent-moss-strong);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
