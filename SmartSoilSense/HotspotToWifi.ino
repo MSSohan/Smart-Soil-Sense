@@ -1,31 +1,42 @@
+//====================================================
+// HotspotToWifi.ino
+//====================================================
+
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
 
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
+void connectWiFi()
+{
+    WiFiManager wm;
 
-  WiFiManager wm;
+    // Hotspot IP
+    IPAddress apIP(10, 10, 10, 10);
+    IPAddress gateway(10, 10, 10, 10);
+    IPAddress subnet(255, 255, 255, 0);
 
-  // Access Point IP
-  IPAddress apIP(10, 10, 10, 10);
-  IPAddress gateway(10, 10, 10, 10);
-  IPAddress subnet(255, 255, 255, 0);
+    wm.setAPStaticIPConfig(apIP, gateway, subnet);
 
-  wm.setAPStaticIPConfig(apIP, gateway, subnet);
+    Serial.println();
+    Serial.println("Checking saved WiFi...");
 
-  // Open hotspot (no password)
-  bool res = wm.autoConnect("Smart Soil Sense");
+    // Try saved WiFi first.
+    // If it fails, automatically starts hotspot.
+    bool connected = wm.autoConnect("Smart Soil Sense");
 
-  if (!res) {
-    Serial.println("Failed to connect.");
-    ESP.restart();
-  }
+    if (!connected)
+    {
+        Serial.println("Failed to connect.");
+        delay(3000);
+        ESP.restart();
+    }
 
-  Serial.println("Connected!");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
-}
+    Serial.println("--------------------------------");
+    Serial.println("WiFi Connected");
+    Serial.print("SSID : ");
+    Serial.println(WiFi.SSID());
 
-void loop() {
+    Serial.print("IP : ");
+    Serial.println(WiFi.localIP());
+
+    Serial.println("--------------------------------");
 }
