@@ -68,6 +68,15 @@
     padding: 0;
 }
 
+/* The `hidden` attribute must always win over any other display rule.
+     Without this, elements that also have an unconditional `display: flex`
+     or `display: grid` elsewhere in this file (like .loading-overlay)
+     can end up stuck visible even after JS sets `.hidden = true`, because
+     author-stylesheet specificity ties are broken by source order. */
+[hidden] {
+    display: none !important;
+}
+
 html,
 body {
     height: 100%;

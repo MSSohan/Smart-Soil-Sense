@@ -6,8 +6,12 @@
 "use strict";
 
 /* ------------------------------------------------------------
-      CONFIG — change the endpoint here when the backend moves.
-      ------------------------------------------------------------ */
+   CONFIG — change the endpoint here when the backend moves.
+   ------------------------------------------------------------ */
+// The dashboard is now served by the same Node server that hosts
+// the API, so a relative path works — no host/port to keep in sync,
+// no CORS, no mixed-content issues. If you ever split them again,
+// swap this back to a full URL like "http://192.168.1.42:5500/api/latest/"
 const API_ENDPOINT = "/api/latest/";
 const POLL_INTERVAL_MS = 5000;
 
@@ -19,8 +23,8 @@ const SENSOR_RANGES = {
 };
 
 /* ------------------------------------------------------------
-      DOM REFERENCES
-      ------------------------------------------------------------ */
+   DOM REFERENCES
+   ------------------------------------------------------------ */
 const loadingOverlay = document.getElementById("loading-overlay");
 const dashboard = document.getElementById("dashboard");
 const offlineBanner = document.getElementById("offline-banner");
@@ -46,14 +50,14 @@ const rangeEls = {
 const rainHint = document.getElementById("rain-hint");
 
 /* ------------------------------------------------------------
-      STATE
-      ------------------------------------------------------------ */
+   STATE
+   ------------------------------------------------------------ */
 let hasReceivedFirstResponse = false;
 let lastKnownData = null;
 
 /* ------------------------------------------------------------
-      UI STATE FUNCTIONS
-      ------------------------------------------------------------ */
+   UI STATE FUNCTIONS
+   ------------------------------------------------------------ */
 
 /**
  * Shows the full-screen loading state. Used only before the very
@@ -99,8 +103,8 @@ function showOffline() {
 }
 
 /* ------------------------------------------------------------
-      RENDERING HELPERS
-      ------------------------------------------------------------ */
+   RENDERING HELPERS
+   ------------------------------------------------------------ */
 
 /**
  * Clamps a value into a 0-100 percentage for a given sensor's
@@ -116,18 +120,25 @@ function percentWithinRange(sensorKey, rawValue) {
 }
 
 /**
- * Formats the API's timestamp string for display. Falls back to the
- * raw string if it can't be parsed, since we never fabricate a value.
+ * Formats the API's timestamp string for display. The server sends
+ * this already in Asia/Dhaka local time (e.g. "2026-07-02 02:16:38"),
+ * so we attach the Dhaka UTC+6 offset before parsing — this makes the
+ * Date object represent the correct instant no matter what timezone
+ * the *viewer's* browser happens to be in — then explicitly render it
+ * back in Asia/Dhaka so it always reads correctly on screen too.
+ * Falls back to the raw string if it can't be parsed, since we never
+ * fabricate a value.
  */
 function formatTimestamp(rawTimestamp) {
   if (!rawTimestamp) return "\u2014";
 
-  const parsed = new Date(rawTimestamp.replace(" ", "T"));
+  const parsed = new Date(rawTimestamp.replace(" ", "T") + "+06:00");
   if (isNaN(parsed.getTime())) {
     return rawTimestamp; // show as-is rather than guessing
   }
 
-  return parsed.toLocaleString(undefined, {
+  const formatted = parsed.toLocaleString("en-US", {
+    timeZone: "Asia/Dhaka",
     year: "numeric",
     month: "short",
     day: "2-digit",
@@ -135,6 +146,8 @@ function formatTimestamp(rawTimestamp) {
     minute: "2-digit",
     second: "2-digit",
   });
+
+  return `${formatted}`;
 }
 
 /**
@@ -172,8 +185,8 @@ function updateDashboard(data) {
 }
 
 /* ------------------------------------------------------------
-      FETCH LOGIC
-      ------------------------------------------------------------ */
+   FETCH LOGIC
+   ------------------------------------------------------------ */
 
 /**
  * Fetches the latest reading from the backend. Handles both
@@ -206,8 +219,8 @@ async function fetchSensorData() {
 }
 
 /* ------------------------------------------------------------
-      BOOTSTRAP
-      ------------------------------------------------------------ */
+   BOOTSTRAP
+   ------------------------------------------------------------ */
 
 function init() {
   endpointLabel.textContent = `Source: ${API_ENDPOINT}`;

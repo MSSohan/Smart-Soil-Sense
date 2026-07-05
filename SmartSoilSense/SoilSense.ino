@@ -11,7 +11,7 @@
 #define SOIL_PIN A0
 #define RAIN_PIN D5
 
-const char* serverUrl = "http://YOUR_SERVER_IP/api/soil";
+const char* serverUrl = "http://10.173.157.49:5500/api/latest/";
 
 DHT dht(DHTPIN, DHTTYPE);
 
