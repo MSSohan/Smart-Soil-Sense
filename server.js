@@ -5,12 +5,16 @@
 //   1. Serve the dashboard (index.html, style.css, script.js)
 //   2. Accept sensor readings from the ESP8266 (POST /api/latest/)
 //   3. Serve the latest reading to the dashboard (GET /api/latest/)
-//   4. Automatically open your browser to the dashboard
+//   4. Persist every reading to a local SQLite database
+//   5. Serve filterable reading history (GET /api/history/)
+//   6. Automatically open your browser to the dashboard
 //
 // Usage:
 //   node server.js
 //
-// No dependencies — only Node's built-in modules.
+// No npm dependencies — only Node's built-in modules, including
+// node:sqlite (built into Node since v22.5.0). If you're on an
+// older Node version, upgrade first: https://nodejs.org
 // ====================================================
 
 const http = require("http");
@@ -18,10 +22,46 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
+const { DatabaseSync } = require("node:sqlite");
 
 const PORT = process.env.PORT || 5500;
-const ENDPOINT_PATH = "/api/latest/";
+const LATEST_PATH = "/api/latest/";
+const HISTORY_PATH = "/api/history/";
 const PUBLIC_DIR = path.join(__dirname, "public");
+const DB_DIR = path.join(__dirname, "data");
+const DB_PATH = path.join(DB_DIR, "soil-sense.db");
+
+// ----------------------------------------------------
+// Database setup — auto-creates the data folder and the
+// readings table on first run if they don't already exist.
+// ----------------------------------------------------
+if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+}
+
+const db = new DatabaseSync(DB_PATH);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    temperature REAL,
+    humidity REAL,
+    soil_moisture REAL,
+    rain INTEGER,
+    ph REAL,
+    updated TEXT
+  )
+`);
+
+// Index on "updated" since every history query filters/sorts by it.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_readings_updated ON readings (updated)`);
+
+const insertReadingStmt = db.prepare(`
+  INSERT INTO readings (temperature, humidity, soil_moisture, rain, ph, updated)
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+console.log(`Database ready at ${DB_PATH}`);
 
 // ----------------------------------------------------
 // Timestamp helper: formats "now" as Asia/Dhaka local time,
@@ -45,7 +85,8 @@ function getDhakaTimestamp() {
 }
 
 // ----------------------------------------------------
-// In-memory store for the most recent sensor reading.
+// In-memory cache of the most recent reading, so GET /api/latest/
+// doesn't need to hit the database on every dashboard poll.
 // ----------------------------------------------------
 let latestReading = null;
 
@@ -62,11 +103,6 @@ const CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 };
 
-// ----------------------------------------------------
-// CORS headers — harmless to keep even on same-origin requests,
-// and useful if you later open the dashboard from elsewhere
-// (e.g. your phone hitting this computer's LAN IP directly).
-// ----------------------------------------------------
 function applyCorsHeaders(res) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -100,10 +136,24 @@ function readJsonBody(req) {
     });
 }
 
+/**
+ * Normalizes a date/time query param into the "YYYY-MM-DD HH:MM:SS"
+ * format used in the "updated" column, so string comparison in SQL
+ * works correctly. Accepts both the "T"-separated format that HTML
+ * <input type="datetime-local"> produces and the space-separated
+ * format already used internally.
+ */
+function normalizeDateParam(raw) {
+    if (!raw) return null;
+    let value = raw.trim().replace("T", " ");
+    if (value.length === 16) value += ":00"; // "YYYY-MM-DD HH:MM" -> add seconds
+    return value;
+}
+
 // ----------------------------------------------------
 // API: POST /api/latest/  — called by the ESP8266
 // ----------------------------------------------------
-async function handleApiPost(req, res) {
+async function handleLatestPost(req, res) {
     let body;
     try {
         body = await readJsonBody(req);
@@ -112,25 +162,38 @@ async function handleApiPost(req, res) {
         return;
     }
 
-    const { temperature, humidity, soil_moisture, rain } = body;
+    const { temperature, humidity, soil_moisture, rain, ph } = body;
 
     if (
         temperature === undefined ||
         humidity === undefined ||
         soil_moisture === undefined ||
-        rain === undefined
+        rain === undefined ||
+        ph === undefined
     ) {
-        sendJson(res, 400, { error: "Missing one or more sensor fields." });
+        sendJson(res, 400, {
+            error: "Missing one or more sensor fields (temperature, humidity, soil_moisture, rain, ph).",
+        });
         return;
     }
 
     latestReading = {
         temperature: Number(temperature),
         humidity: Number(humidity),
-        soil_moisture: Number(soil_moisture),
-        rain: Number(rain),
+        soil_moisture: Number(soil_moisture), // already a % from the ESP8266
+        rain: Number(rain), // raw analog reading from the CD4051 mux
+        ph: Number(ph),
         updated: getDhakaTimestamp(),
     };
+
+    insertReadingStmt.run(
+        latestReading.temperature,
+        latestReading.humidity,
+        latestReading.soil_moisture,
+        latestReading.rain,
+        latestReading.ph,
+        latestReading.updated
+    );
 
     console.log("Received reading:", latestReading);
     sendJson(res, 200, { status: "ok" });
@@ -139,7 +202,7 @@ async function handleApiPost(req, res) {
 // ----------------------------------------------------
 // API: GET /api/latest/  — called by the dashboard
 // ----------------------------------------------------
-function handleApiGet(req, res) {
+function handleLatestGet(req, res) {
     if (!latestReading) {
         sendJson(res, 503, { error: "No reading received yet." });
         return;
@@ -148,12 +211,50 @@ function handleApiGet(req, res) {
 }
 
 // ----------------------------------------------------
+// API: GET /api/history/?start=...&end=...&limit=...
+// Returns stored readings, optionally filtered by a date/time
+// range, newest first. "start"/"end" accept either
+// "YYYY-MM-DDTHH:MM" (from a datetime-local input) or
+// "YYYY-MM-DD HH:MM:SS".
+// ----------------------------------------------------
+function handleHistoryGet(req, res, query) {
+    const start = normalizeDateParam(query.get("start"));
+    const end = normalizeDateParam(query.get("end"));
+    const limitParam = parseInt(query.get("limit"), 10);
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 5000) : 500;
+
+    let sql = "SELECT id, temperature, humidity, soil_moisture, rain, ph, updated FROM readings";
+    const clauses = [];
+    const params = [];
+
+    if (start) {
+        clauses.push("updated >= ?");
+        params.push(start);
+    }
+    if (end) {
+        clauses.push("updated <= ?");
+        params.push(end);
+    }
+    if (clauses.length) {
+        sql += " WHERE " + clauses.join(" AND ");
+    }
+    sql += " ORDER BY updated DESC LIMIT ?";
+    params.push(limit);
+
+    try {
+        const rows = db.prepare(sql).all(...params);
+        sendJson(res, 200, { count: rows.length, readings: rows });
+    } catch (err) {
+        console.error("History query failed:", err);
+        sendJson(res, 500, { error: "Failed to query history." });
+    }
+}
+
+// ----------------------------------------------------
 // Static file serving for everything under /public
 // ----------------------------------------------------
-function handleStatic(req, res) {
-    let urlPath = req.url === "/" ? "/index.html" : req.url;
-    urlPath = urlPath.split("?")[0];
-
+function handleStatic(req, res, pathname) {
+    const urlPath = pathname === "/" ? "/index.html" : pathname;
     const filePath = path.join(PUBLIC_DIR, urlPath);
 
     // Prevent path traversal outside the public folder.
@@ -181,7 +282,8 @@ function handleStatic(req, res) {
 const server = http.createServer(async (req, res) => {
     applyCorsHeaders(res);
 
-    const path_ = req.url.split("?")[0];
+    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const pathname = requestUrl.pathname;
 
     if (req.method === "OPTIONS") {
         res.writeHead(204);
@@ -189,18 +291,23 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    if (path_ === ENDPOINT_PATH && req.method === "POST") {
-        await handleApiPost(req, res);
+    if (pathname === LATEST_PATH && req.method === "POST") {
+        await handleLatestPost(req, res);
         return;
     }
 
-    if (path_ === ENDPOINT_PATH && req.method === "GET") {
-        handleApiGet(req, res);
+    if (pathname === LATEST_PATH && req.method === "GET") {
+        handleLatestGet(req, res);
+        return;
+    }
+
+    if (pathname === HISTORY_PATH && req.method === "GET") {
+        handleHistoryGet(req, res, requestUrl.searchParams);
         return;
     }
 
     // Anything else falls through to static file serving (dashboard).
-    handleStatic(req, res);
+    handleStatic(req, res, pathname);
 });
 
 // ----------------------------------------------------

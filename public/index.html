@@ -53,6 +53,9 @@
             </div>
 
             <div class="header-meta">
+                <button type="button" class="history-btn" id="history-btn">
+                    <span aria-hidden="true">📜</span> History
+                </button>
                 <div class="status-pill" id="status-pill">
                     <span class="status-dot" id="status-dot" aria-hidden="true"></span>
                     <span id="status-label">Connected</span>
@@ -112,12 +115,28 @@
                 </div>
                 <div class="card-value-row">
                     <span class="card-value" id="value-soil_moisture">&#8211;&#8211;</span>
-                    <span class="card-unit">raw</span>
+                    <span class="card-unit">%</span>
                 </div>
                 <div class="range-bar" aria-hidden="true">
                     <div class="range-bar-fill" id="range-soil_moisture"></div>
                 </div>
-                <div class="range-labels" aria-hidden="true"><span>0</span><span>1023</span></div>
+                <div class="range-labels" aria-hidden="true"><span>0%</span><span>100%</span></div>
+            </section>
+
+            <!-- pH -->
+            <section class="sensor-card" data-sensor="ph">
+                <div class="card-top">
+                    <span class="card-icon" aria-hidden="true">⚗️</span>
+                    <span class="card-label">Soil pH</span>
+                </div>
+                <div class="card-value-row">
+                    <span class="card-value" id="value-ph">&#8211;&#8211;</span>
+                    <span class="card-unit">pH</span>
+                </div>
+                <div class="range-bar" aria-hidden="true">
+                    <div class="range-bar-fill" id="range-ph"></div>
+                </div>
+                <div class="range-labels" aria-hidden="true"><span>0</span><span>14</span></div>
             </section>
 
             <!-- Rain -->
@@ -127,9 +146,13 @@
                     <span class="card-label">Rain</span>
                 </div>
                 <div class="card-value-row">
-                    <span class="rain-badge" id="value-rain">&#8211;&#8211;</span>
+                    <span class="card-value" id="value-rain">&#8211;&#8211;</span>
+                    <span class="card-unit">mm</span>
                 </div>
-                <p class="rain-hint" id="rain-hint">Awaiting reading&hellip;</p>
+                <div class="range-bar" aria-hidden="true">
+                    <div class="range-bar-fill" id="range-rain"></div>
+                </div>
+                <div class="range-labels" aria-hidden="true"><span>0</span><span>1024</span></div>
             </section>
 
         </main>
@@ -137,6 +160,57 @@
         <footer class="dash-footer">
             <span id="endpoint-label"></span>
         </footer>
+    </div>
+
+    <!-- ============================================================
+       HISTORY MODAL — opened via the History button in the header
+       ============================================================ -->
+    <div id="history-modal" class="history-modal" hidden role="dialog" aria-modal="true"
+        aria-labelledby="history-title">
+        <div class="history-backdrop" id="history-backdrop"></div>
+        <div class="history-panel">
+            <div class="history-panel-header">
+                <h2 id="history-title">Reading History</h2>
+                <button type="button" class="history-close" id="history-close"
+                    aria-label="Close history">&times;</button>
+            </div>
+
+            <form class="history-filters" id="history-filters">
+                <div class="filter-field">
+                    <label for="filter-start">From</label>
+                    <input type="datetime-local" id="filter-start" name="start" />
+                </div>
+                <div class="filter-field">
+                    <label for="filter-end">To</label>
+                    <input type="datetime-local" id="filter-end" name="end" />
+                </div>
+                <div class="filter-actions">
+                    <button type="submit" class="filter-btn filter-btn-primary">Apply Filter</button>
+                    <button type="button" class="filter-btn" id="filter-reset">Reset</button>
+                </div>
+            </form>
+
+            <div class="history-table-wrap">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Temp (°C)</th>
+                            <th>Humidity (%)</th>
+                            <th>Soil (%)</th>
+                            <th>Rain (mm)</th>
+                            <th>pH</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body">
+                        <!-- Rows injected by script.js -->
+                    </tbody>
+                </table>
+                <p class="history-empty-state" id="history-empty">Loading history&hellip;</p>
+            </div>
+
+            <p class="history-count" id="history-count"></p>
+        </div>
     </div>
 
     <script src="script.js"></script>

@@ -13,13 +13,19 @@
 // no CORS, no mixed-content issues. If you ever split them again,
 // swap this back to a full URL like "http://192.168.1.42:5500/api/latest/"
 const API_ENDPOINT = "/api/latest/";
+const HISTORY_ENDPOINT = "/api/history/";
 const POLL_INTERVAL_MS = 5000;
 
-/* Typical sensor ranges, used only to size the visual range bars. */
+/* Typical sensor ranges, used to size the visual range bars.
+   Soil moisture arrives as a % (already converted on the ESP8266
+   from its raw calibration). Rain is the raw analog reading from
+   the CD4051 mux, shown as-is with no derived interpretation. */
 const SENSOR_RANGES = {
   temperature: { min: 0, max: 50 },
   humidity: { min: 0, max: 100 },
-  soil_moisture: { min: 0, max: 1023 },
+  soil_moisture: { min: 0, max: 100 },
+  ph: { min: 0, max: 14 },
+  rain: { min: 0, max: 1023 },
 };
 
 /* ------------------------------------------------------------
@@ -38,6 +44,7 @@ const valueEls = {
   temperature: document.getElementById("value-temperature"),
   humidity: document.getElementById("value-humidity"),
   soil_moisture: document.getElementById("value-soil_moisture"),
+  ph: document.getElementById("value-ph"),
   rain: document.getElementById("value-rain"),
 };
 
@@ -45,9 +52,24 @@ const rangeEls = {
   temperature: document.getElementById("range-temperature"),
   humidity: document.getElementById("range-humidity"),
   soil_moisture: document.getElementById("range-soil_moisture"),
+  ph: document.getElementById("range-ph"),
+  rain: document.getElementById("range-rain"),
 };
 
-const rainHint = document.getElementById("rain-hint");
+/* ------------------------------------------------------------
+   HISTORY MODAL — DOM REFERENCES
+   ------------------------------------------------------------ */
+const historyBtn = document.getElementById("history-btn");
+const historyModal = document.getElementById("history-modal");
+const historyBackdrop = document.getElementById("history-backdrop");
+const historyClose = document.getElementById("history-close");
+const historyFiltersForm = document.getElementById("history-filters");
+const filterStartInput = document.getElementById("filter-start");
+const filterEndInput = document.getElementById("filter-end");
+const filterResetBtn = document.getElementById("filter-reset");
+const historyTableBody = document.getElementById("history-table-body");
+const historyEmptyState = document.getElementById("history-empty");
+const historyCountEl = document.getElementById("history-count");
 
 /* ------------------------------------------------------------
    STATE
@@ -129,7 +151,7 @@ function percentWithinRange(sensorKey, rawValue) {
  * Falls back to the raw string if it can't be parsed, since we never
  * fabricate a value.
  */
-function formatTimestamp(rawTimestamp) {
+function formatTimestamp(rawTimestamp, { withSuffix = true } = {}) {
   if (!rawTimestamp) return "\u2014";
 
   const parsed = new Date(rawTimestamp.replace(" ", "T") + "+06:00");
@@ -147,7 +169,7 @@ function formatTimestamp(rawTimestamp) {
     second: "2-digit",
   });
 
-  return `${formatted}`;
+  return withSuffix ? `${formatted}` : formatted;
 }
 
 /**
@@ -162,23 +184,23 @@ function updateDashboard(data) {
     percentWithinRange("temperature", data.temperature) + "%";
 
   // Humidity
-  valueEls.humidity.textContent = Math.round(data.humidity);
+  valueEls.humidity.textContent = data.humidity.toFixed(1);
   rangeEls.humidity.style.width =
     percentWithinRange("humidity", data.humidity) + "%";
 
-  // Soil moisture
-  valueEls.soil_moisture.textContent = Math.round(data.soil_moisture);
+  // Soil moisture (already a % from the ESP8266)
+  valueEls.soil_moisture.textContent = data.soil_moisture.toFixed(1);
   rangeEls.soil_moisture.style.width =
     percentWithinRange("soil_moisture", data.soil_moisture) + "%";
 
-  // Rain: 0 = rain detected, 1 = no rain (per spec)
-  const rainDetected = Number(data.rain) === 0;
-  valueEls.rain.textContent = rainDetected ? "Rain Detected" : "No Rain";
-  valueEls.rain.classList.remove("rain-yes", "rain-no");
-  valueEls.rain.classList.add(rainDetected ? "rain-yes" : "rain-no");
-  rainHint.textContent = rainDetected
-    ? "Moisture detected on the rain sensor."
-    : "Rain sensor is dry.";
+  // Soil pH
+  valueEls.ph.textContent = data.ph.toFixed(1);
+  rangeEls.ph.style.width = percentWithinRange("ph", data.ph) + "%";
+
+  // Rain: raw analog reading from the CD4051 mux, shown exactly as
+  // the device reports it — no derived wet/dry interpretation.
+  valueEls.rain.textContent = data.rain;
+  rangeEls.rain.style.width = percentWithinRange("rain", data.rain) + "%";
 
   // Timestamp
   lastUpdatedValue.textContent = formatTimestamp(data.updated);
@@ -219,17 +241,116 @@ async function fetchSensorData() {
 }
 
 /* ------------------------------------------------------------
+   HISTORY MODAL
+   ------------------------------------------------------------ */
+
+/**
+ * Renders a single row of the history table as an HTML string.
+ * Every value comes straight from the server response, so no
+ * fabricated data ever appears here.
+ */
+function renderHistoryRow(reading) {
+  return `
+       <tr>
+         <td>${formatTimestamp(reading.updated, { withSuffix: false })}</td>
+         <td>${reading.temperature.toFixed(1)}</td>
+         <td>${reading.humidity.toFixed(1)}</td>
+         <td>${reading.soil_moisture.toFixed(1)}</td>
+         <td>${reading.rain}</td>
+         <td>${reading.ph.toFixed(1)}</td>
+       </tr>
+     `;
+}
+
+/**
+ * Fetches history from the backend, optionally filtered by a
+ * start/end date-time range, and renders it into the table.
+ */
+async function fetchAndRenderHistory() {
+  historyEmptyState.hidden = false;
+  historyEmptyState.textContent = "Loading history\u2026";
+  historyTableBody.innerHTML = "";
+  historyCountEl.textContent = "";
+
+  const params = new URLSearchParams();
+  if (filterStartInput.value) params.set("start", filterStartInput.value);
+  if (filterEndInput.value) params.set("end", filterEndInput.value);
+
+  try {
+    const response = await fetch(`${HISTORY_ENDPOINT}?${params.toString()}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const readings = data.readings || [];
+
+    if (readings.length === 0) {
+      historyEmptyState.hidden = false;
+      historyEmptyState.textContent = "No readings found for this range.";
+      historyCountEl.textContent = "";
+      return;
+    }
+
+    historyEmptyState.hidden = true;
+    historyTableBody.innerHTML = readings.map(renderHistoryRow).join("");
+    historyCountEl.textContent = `Showing ${readings.length} reading${readings.length === 1 ? "" : "s"}.`;
+  } catch (error) {
+    console.error("[SmartSoilSense] fetchAndRenderHistory failed:", error);
+    historyEmptyState.hidden = false;
+    historyEmptyState.textContent = "Could not load history — is the server running?";
+    historyCountEl.textContent = "";
+  }
+}
+
+function openHistoryModal() {
+  historyModal.hidden = false;
+  fetchAndRenderHistory();
+}
+
+function closeHistoryModal() {
+  historyModal.hidden = true;
+}
+
+/* ------------------------------------------------------------
    BOOTSTRAP
    ------------------------------------------------------------ */
 
 function init() {
-  endpointLabel.textContent = `Source: ${API_ENDPOINT}`;
+  // endpointLabel.textContent = `Source: ${API_ENDPOINT}`;
 
   showLoading();
 
   // Fetch immediately on load, then poll on a fixed interval.
   fetchSensorData();
   setInterval(fetchSensorData, POLL_INTERVAL_MS);
+
+  // --- History modal wiring ---
+  historyBtn.addEventListener("click", openHistoryModal);
+  historyClose.addEventListener("click", closeHistoryModal);
+  historyBackdrop.addEventListener("click", closeHistoryModal);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !historyModal.hidden) {
+      closeHistoryModal();
+    }
+  });
+
+  historyFiltersForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    fetchAndRenderHistory();
+  });
+
+  filterResetBtn.addEventListener("click", () => {
+    filterStartInput.value = "";
+    filterEndInput.value = "";
+    fetchAndRenderHistory();
+  });
 }
 
 document.addEventListener("DOMContentLoaded", init);
