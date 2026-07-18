@@ -24,7 +24,7 @@
 #define SOIL_DRY 1024
 #define SOIL_WET 400
 
-const char* serverUrl = "http://192.168.0.105:5500 /api/latest/";
+const char* serverUrl = "http://192.168.0.110:5500/api/latest/";
 
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -62,9 +62,6 @@ void runSoilSense()
     //---------- Soil Moisture ----------
     int soilRaw = readMux(SOIL_CHANNEL);
 
-    Serial.print("Soil Raw: ");
-    Serial.println(soilRaw);
-
     int soilValue = map(soilRaw, SOIL_DRY, SOIL_WET, 0, 100);
     soilValue = constrain(soilValue, 0, 100);
 
@@ -73,11 +70,11 @@ void runSoilSense()
 
     //---------- pH Sensor ----------
     int phRaw = readMux(PH_CHANNEL);
-
+    
     float voltage = phRaw * (3.3 / 1023.0);
-
-    // Placeholder calibration
-    float phValue = 7.0 + ((2.50 - voltage) / 0.18);
+    
+    // Temporary calibration
+    float phValue = 7.0 + ((1.68 - voltage) / 0.18);
 
     Serial.println();
     Serial.println("======================================");
