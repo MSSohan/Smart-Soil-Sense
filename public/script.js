@@ -237,6 +237,7 @@ async function fetchSensorData() {
   } catch (error) {
     console.error("[SmartSoilSense] fetchSensorData failed:", error);
     showOffline();
+    // showDashboard();
   }
 }
 
