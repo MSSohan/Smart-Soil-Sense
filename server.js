@@ -7,13 +7,16 @@
 //   3. Serve the latest reading to the dashboard (GET /api/latest/)
 //   4. Persist every reading to a local SQLite database
 //   5. Serve filterable reading history (GET /api/history/)
-//   6. Automatically open your browser to the dashboard
+//   6. Serve the current agricultural season's rainfall/temp/humidity
+//      averages from NASA POWER (GET /api/climate/)
+//   7. Automatically open your browser to the dashboard
 //
 // Usage:
 //   node server.js
 //
 // No npm dependencies — only Node's built-in modules, including
-// node:sqlite (built into Node since v22.5.0). If you're on an
+// node:sqlite (built into Node since v22.5.0) and the global
+// fetch() API (built into Node since v18). If you're on an
 // older Node version, upgrade first: https://nodejs.org
 // ====================================================
 
@@ -27,6 +30,7 @@ const { DatabaseSync } = require("node:sqlite");
 const PORT = process.env.PORT || 5500;
 const LATEST_PATH = "/api/latest/";
 const HISTORY_PATH = "/api/history/";
+const CLIMATE_PATH = "/api/climate/";
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DB_DIR = path.join(__dirname, "data");
 const DB_PATH = path.join(DB_DIR, "soil-sense.db");
@@ -42,24 +46,36 @@ if (!fs.existsSync(DB_DIR)) {
 const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
-  CREATE TABLE IF NOT EXISTS readings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    temperature REAL,
-    humidity REAL,
-    soil_moisture REAL,
-    rain INTEGER,
-    ph REAL,
-    updated TEXT
-  )
-`);
+    CREATE TABLE IF NOT EXISTS readings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      temperature REAL,
+      humidity REAL,
+      soil_moisture REAL,
+      rain INTEGER,
+      ph REAL,
+      updated TEXT
+    )
+  `);
+
+// avg_rainfall: the current agricultural season's NASA POWER average
+// rainfall (mm/day) at the moment this reading was saved — NOT the
+// device's own raw rain sensor value, which stays in the "rain"
+// column untouched. Added via ALTER TABLE so existing databases from
+// before this change still work; the try/catch just ignores the
+// "duplicate column" error on servers where it's already been added.
+try {
+    db.exec(`ALTER TABLE readings ADD COLUMN avg_rainfall REAL`);
+} catch (err) {
+    if (!/duplicate column/i.test(err.message)) throw err;
+}
 
 // Index on "updated" since every history query filters/sorts by it.
 db.exec(`CREATE INDEX IF NOT EXISTS idx_readings_updated ON readings (updated)`);
 
 const insertReadingStmt = db.prepare(`
-  INSERT INTO readings (temperature, humidity, soil_moisture, rain, ph, updated)
-  VALUES (?, ?, ?, ?, ?, ?)
-`);
+    INSERT INTO readings (temperature, humidity, soil_moisture, rain, ph, updated, avg_rainfall)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
 
 console.log(`Database ready at ${DB_PATH}`);
 
@@ -192,7 +208,10 @@ async function handleLatestPost(req, res) {
         latestReading.soil_moisture,
         latestReading.rain,
         latestReading.ph,
-        latestReading.updated
+        latestReading.updated,
+        climateCache && climateCache.currentSeason
+            ? Number(climateCache.currentSeason.avgRainfall)
+            : null
     );
 
     console.log("Received reading:", latestReading);
@@ -223,7 +242,7 @@ function handleHistoryGet(req, res, query) {
     const limitParam = parseInt(query.get("limit"), 10);
     const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 5000) : 500;
 
-    let sql = "SELECT id, temperature, humidity, soil_moisture, rain, ph, updated FROM readings";
+    let sql = "SELECT id, temperature, humidity, soil_moisture, rain, avg_rainfall, ph, updated FROM readings";
     const clauses = [];
     const params = [];
 
@@ -248,6 +267,215 @@ function handleHistoryGet(req, res, query) {
         console.error("History query failed:", err);
         sendJson(res, 500, { error: "Failed to query history." });
     }
+}
+
+// ======================================================================
+// CLIMATE / SEASON DATA (NEW) — NASA POWER rainfall/temperature/humidity
+// for the field's location, aggregated into Bangladesh's 3 agricultural
+// seasons (not calendar quarters), and resolved down to "whichever
+// season it is right now" for the dashboard. Independent of the
+// device's own "rain" sensor field: the ESP8266 keeps sending its raw
+// CD4051 rain reading exactly as before, and it's still stored in the
+// "readings" table untouched.
+// ======================================================================
+
+const CLIMATE_LAT = 22.5083; // Hathazari, Chattogram
+const CLIMATE_LON = 91.8083;
+const CLIMATE_LOCATION_NAME = "Hathazari, Chattogram";
+
+// NASA POWER is a daily-granularity climate dataset, not a live feed —
+// it doesn't need to be re-fetched on every dashboard poll. It's cached
+// in memory and refreshed once a day.
+const CLIMATE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+let climateCache = null; // { periods, currentSeason } once populated
+let climateCacheFetchedAt = null; // Dhaka-local timestamp string of that fetch
+let climateFetchInFlight = null; // dedupes overlapping fetches
+
+/**
+ * Maps a Date to one of Bangladesh's 3 agricultural seasons (BBS/DAE split):
+ *   Rabi (winter):       Nov - Feb
+ *   Kharif-I (summer):   Mar - Jun
+ *   Kharif-II (monsoon): Jul - Oct
+ * Rabi crosses a year boundary, so seasonYear = the year it STARTED in
+ * (e.g. Jan 2026 is part of "Rabi 2025").
+ */
+function getSeasonInfo(date) {
+    const month = date.getMonth(); // 0-11
+    const year = date.getFullYear();
+
+    if (month === 10 || month === 11) return { name: "Rabi", seasonYear: year };
+    if (month === 0 || month === 1) return { name: "Rabi", seasonYear: year - 1 };
+    if (month >= 2 && month <= 5) return { name: "Kharif-I", seasonYear: year };
+    return { name: "Kharif-II", seasonYear: year }; // Jul-Oct
+}
+
+/**
+ * Fetches one year of daily rainfall/temperature/humidity from NASA
+ * POWER for CLIMATE_LAT/CLIMATE_LON, then aggregates it by Bangladesh
+ * agricultural season (Rabi / Kharif-I / Kharif-II) instead of
+ * calendar quarter.
+ */
+async function getClimateData() {
+    const end = new Date();
+    end.setDate(end.getDate() - 1);
+
+    const start = new Date(end);
+    start.setMonth(start.getMonth() - 16);
+
+    const format = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
+
+    const url =
+        `https://power.larc.nasa.gov/api/temporal/daily/point` +
+        `?parameters=PRECTOTCORR,T2M,RH2M` +
+        `&community=AG` +
+        `&latitude=${CLIMATE_LAT}` +
+        `&longitude=${CLIMATE_LON}` +
+        `&start=${format(start)}` +
+        `&end=${format(end)}` +
+        `&format=JSON`;
+
+    const res = await fetch(url);
+
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+
+    const rainfall = data.properties.parameter.PRECTOTCORR;
+    const temperature = data.properties.parameter.T2M;
+    const humidity = data.properties.parameter.RH2M;
+
+    const groups = {};
+    
+    for (const date of Object.keys(rainfall)) {
+        const rain = rainfall[date];
+        const temp = temperature[date];
+        const hum = humidity[date];
+
+        if (rain === -999 || temp === -999 || hum === -999) continue;
+
+        const d = new Date(
+            Number(date.slice(0, 4)),
+            Number(date.slice(4, 6)) - 1,
+            Number(date.slice(6, 8))
+        );
+
+        const { name: seasonName, seasonYear } = getSeasonInfo(d);
+        const key = `${seasonName} ${seasonYear}`;
+
+        if (!groups[key]) {
+            groups[key] = {
+                rainfall: [],
+                rainfallByDate: [],
+                temperature: [],
+                humidity: []
+            };
+        }
+
+        groups[key].rainfall.push(rain);
+        groups[key].rainfallByDate.push({ date, value: rain });
+        groups[key].temperature.push(temp);
+        groups[key].humidity.push(hum);
+    }
+
+    const result = Object.entries(groups).map(([period, values]) => {
+        // Group each season's daily rainfall by calendar month, sum each
+        // month's total, then average those monthly totals. This gives
+        // "average monthly rainfall during the season" (e.g. ~500-600mm
+        // for Chattogram's monsoon months) rather than a daily mean.
+        const monthlyTotals = {};
+        for (const { date, value } of values.rainfallByDate) {
+            const monthKey = date.slice(0, 6); // "YYYYMM"
+            monthlyTotals[monthKey] = (monthlyTotals[monthKey] || 0) + value;
+        }
+        const monthlySums = Object.values(monthlyTotals);
+        const avgMonthlyRainfall =
+            monthlySums.reduce((a, b) => a + b, 0) / monthlySums.length;
+
+        return {
+            period,
+            avgRainfall: avgMonthlyRainfall.toFixed(2),
+            avgTemperature: (
+                values.temperature.reduce((a, b) => a + b, 0) /
+                values.temperature.length
+            ).toFixed(2),
+            avgHumidity: (
+                values.humidity.reduce((a, b) => a + b, 0) /
+                values.humidity.length
+            ).toFixed(2),
+        };
+    });
+
+    return result;
+}
+
+/**
+ * Uses the server's current date to figure out which season we're
+ * in right now, then returns that season's averages from the
+ * already-aggregated NASA data. This is what the dashboard shows.
+ */
+function resolveCurrentSeason(periods) {
+    const { name, seasonYear } = getSeasonInfo(new Date());
+    const key = `${name} ${seasonYear - 1}`;
+    // console.log(key);
+    return periods.find((p) => p.period === key) || null;
+}
+
+/**
+ * Refreshes the in-memory climate cache. Safe to call repeatedly —
+ * overlapping calls share the same in-flight promise instead of
+ * firing duplicate requests at NASA POWER. Errors are logged but
+ * never thrown up to callers that didn't ask for them (e.g. the
+ * periodic timer); the old cached data (if any) is left in place
+ * on failure rather than being wiped.
+ */
+async function refreshClimateCache() {
+    if (climateFetchInFlight) return climateFetchInFlight;
+
+    climateFetchInFlight = (async () => {
+        try {
+            const periods = await getClimateData();
+            climateCache = {
+                periods,
+                currentSeason: resolveCurrentSeason(periods),
+            };
+            climateCacheFetchedAt = getDhakaTimestamp();
+            // console.log(`Climate data refreshed (${periods.length} season period(s)) at ${climateCacheFetchedAt}`);
+        } catch (err) {
+            console.error("[SmartSoilSense] Climate data refresh failed:", err.message);
+            // Keep serving the previous climateCache, if any — never clear it on a failed refresh.
+        } finally {
+            climateFetchInFlight = null;
+        }
+    })();
+
+    return climateFetchInFlight;
+}
+
+// ----------------------------------------------------
+// API: GET /api/climate/  — current season's NASA POWER averages
+// ----------------------------------------------------
+async function handleClimateGet(req, res) {
+    if (!climateCache) {
+        // First-ever request before the startup fetch has resolved:
+        // wait for it once rather than returning empty.
+        await refreshClimateCache();
+    }
+
+    if (!climateCache) {
+        sendJson(res, 503, { error: "Climate data not yet available. Try again shortly." });
+        return;
+    }
+
+    sendJson(res, 200, {
+        source: "NASA POWER (power.larc.nasa.gov)",
+        location: { lat: CLIMATE_LAT, lon: CLIMATE_LON, name: CLIMATE_LOCATION_NAME },
+        fetchedAt: climateCacheFetchedAt,
+        currentSeason: climateCache.currentSeason,
+        periods: climateCache.periods,
+    });
 }
 
 // ----------------------------------------------------
@@ -306,6 +534,11 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    if (pathname === CLIMATE_PATH && req.method === "GET") {
+        await handleClimateGet(req, res);
+        return;
+    }
+
     // Anything else falls through to static file serving (dashboard).
     handleStatic(req, res, pathname);
 });
@@ -343,6 +576,12 @@ server.listen(PORT, "0.0.0.0", () => {
         }
     }
     console.log("");
+
+    // Kick off the first climate-data fetch in the background — the
+    // dashboard doesn't need to wait on it, and the periodic refresh
+    // keeps it from ever going stale for more than a day.
+    refreshClimateCache();
+    setInterval(refreshClimateCache, CLIMATE_CACHE_TTL_MS);
 
     openBrowser(localUrl);
 });

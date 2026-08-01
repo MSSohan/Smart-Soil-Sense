@@ -14,18 +14,28 @@
 // swap this back to a full URL like "http://192.168.1.42:5500/api/latest/"
 const API_ENDPOINT = "/api/latest/";
 const HISTORY_ENDPOINT = "/api/history/";
+const CLIMATE_ENDPOINT = "/api/climate/";
 const POLL_INTERVAL_MS = 5000;
 
 /* Typical sensor ranges, used to size the visual range bars.
    Soil moisture arrives as a % (already converted on the ESP8266
-   from its raw calibration). Rain is the raw analog reading from
-   the CD4051 mux, shown as-is with no derived interpretation. */
+   from its raw calibration). Rain is now the current season's
+   average daily rainfall (mm) from NASA POWER, not the device's
+   raw CD4051 analog reading. */
 const SENSOR_RANGES = {
   temperature: { min: 0, max: 50 },
   humidity: { min: 0, max: 100 },
   soil_moisture: { min: 0, max: 100 },
   ph: { min: 0, max: 14 },
-  rain: { min: 0, max: 1023 },
+  rain: { min: 0, max: 2000 },
+};
+
+/* Human-readable labels for each agricultural season, used to build
+   the "Rabi (Winter Season): Nov - Feb" style text under the grid. */
+const SEASON_DISPLAY = {
+  "Rabi": { label: "Winter Season", months: "Nov - Feb" },
+  "Kharif-I": { label: "Summer Season", months: "Mar - Jun" },
+  "Kharif-II": { label: "Monsoon Season", months: "Jul - Oct" },
 };
 
 /* ------------------------------------------------------------
@@ -56,6 +66,10 @@ const rangeEls = {
   rain: document.getElementById("range-rain"),
 };
 
+// Shows the season name and location as two separate lines below the card grid.
+const seasonNameEl = document.getElementById("season-name");
+const seasonLocationEl = document.getElementById("season-location");
+
 /* ------------------------------------------------------------
    HISTORY MODAL — DOM REFERENCES
    ------------------------------------------------------------ */
@@ -76,6 +90,11 @@ const historyCountEl = document.getElementById("history-count");
    ------------------------------------------------------------ */
 let hasReceivedFirstResponse = false;
 let lastKnownData = null;
+
+// Current agricultural season's NASA POWER averages + location name,
+// populated once by fetchClimateData() and reused on every render.
+let currentSeasonData = null;
+let climateLocationName = null;
 
 /* ------------------------------------------------------------
    UI STATE FUNCTIONS
@@ -197,10 +216,32 @@ function updateDashboard(data) {
   valueEls.ph.textContent = data.ph.toFixed(1);
   rangeEls.ph.style.width = percentWithinRange("ph", data.ph) + "%";
 
-  // Rain: raw analog reading from the CD4051 mux, shown exactly as
-  // the device reports it — no derived wet/dry interpretation.
-  valueEls.rain.textContent = data.rain;
-  rangeEls.rain.style.width = percentWithinRange("rain", data.rain) + "%";
+  // Rain: sourced from the current agricultural season's NASA POWER
+  // average daily rainfall, not the device's raw analog reading. The
+  // device still sends its own "rain" field and it's still stored
+  // server-side — just not shown here.
+  if (currentSeasonData) {
+    const avgRain = parseFloat(currentSeasonData.avgRainfall);
+    valueEls.rain.textContent = avgRain.toFixed(1);
+    rangeEls.rain.style.width = percentWithinRange("rain", avgRain) + "%";
+    if (seasonNameEl) {
+      // currentSeasonData.period looks like "Rabi 2025" — split off the
+      // season name (everything before the trailing year) to look it up.
+      const seasonName = currentSeasonData.period.replace(/\s+\d{4}$/, "");
+      const display = SEASON_DISPLAY[seasonName];
+
+      seasonNameEl.textContent = display
+        ? `${seasonName} (${display.label}): ${display.months}`
+        : currentSeasonData.period;
+    }
+    if (seasonLocationEl) {
+      seasonLocationEl.textContent = climateLocationName || "";
+    }
+  } else {
+    valueEls.rain.textContent = "\u2013\u2013";
+    rangeEls.rain.style.width = "0%";
+    if (seasonLabelEl) seasonLabelEl.textContent = "";
+  }
 
   // Timestamp
   lastUpdatedValue.textContent = formatTimestamp(data.updated);
@@ -241,6 +282,39 @@ async function fetchSensorData() {
   }
 }
 
+/**
+ * Fetches the current agricultural season's rainfall/temperature/
+ * humidity averages from NASA POWER (via our own server's
+ * /api/climate/ cache). This is a daily-granularity dataset, so it's
+ * only fetched once at startup — not on the 5s sensor poll — and
+ * re-applied to the dashboard once it arrives.
+ */
+async function fetchClimateData() {
+  try {
+    const response = await fetch(CLIMATE_ENDPOINT, {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    currentSeasonData = data.currentSeason || null;
+    climateLocationName = data.location ? data.location.name : null;
+
+    // If sensor data already rendered before climate data arrived,
+    // refresh the rain card now that we have it.
+    if (lastKnownData) {
+      updateDashboard(lastKnownData);
+    }
+  } catch (error) {
+    console.error("[SmartSoilSense] fetchClimateData failed:", error);
+  }
+}
+
 /* ------------------------------------------------------------
    HISTORY MODAL
    ------------------------------------------------------------ */
@@ -252,15 +326,15 @@ async function fetchSensorData() {
  */
 function renderHistoryRow(reading) {
   return `
-       <tr>
-         <td>${formatTimestamp(reading.updated, { withSuffix: false })}</td>
-         <td>${reading.temperature.toFixed(1)}</td>
-         <td>${reading.humidity.toFixed(1)}</td>
-         <td>${reading.soil_moisture.toFixed(1)}</td>
-         <td>${reading.rain}</td>
-         <td>${reading.ph.toFixed(1)}</td>
-       </tr>
-     `;
+          <tr>
+            <td>${formatTimestamp(reading.updated, { withSuffix: false })}</td>
+            <td>${reading.temperature.toFixed(1)}</td>
+            <td>${reading.humidity.toFixed(1)}</td>
+            <td>${reading.soil_moisture.toFixed(1)}</td>
+            <td>${reading.avg_rainfall != null ? Number(reading.avg_rainfall).toFixed(1) : "\u2013\u2013"}</td>
+            <td>${reading.ph.toFixed(1)}</td>
+          </tr>
+        `;
 }
 
 /**
@@ -329,6 +403,7 @@ function init() {
 
   // Fetch immediately on load, then poll on a fixed interval.
   fetchSensorData();
+  fetchClimateData();
   setInterval(fetchSensorData, POLL_INTERVAL_MS);
 
   // --- History modal wiring ---

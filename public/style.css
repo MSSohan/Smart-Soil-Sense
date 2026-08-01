@@ -746,6 +746,36 @@ body {
     }
 }
 
+/* ============================================================
+     SEASON LABEL — sits below the card grid, shows which BD
+     agricultural season the Rain card's average is drawn from,
+     plus the location NASA POWER data was pulled for.
+     ============================================================ */
+#season-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    text-align: center;
+    margin-top: 1.25rem;
+    font-family: var(--font-mono);
+    letter-spacing: 0.01em;
+}
+
+#season-name {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+
+#season-location {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+}
+
+#season-name:empty,
+#season-location:empty {
+    display: none;
+}
 
 /* ============================================================
      FOOTER
