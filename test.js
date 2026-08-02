@@ -5,36 +5,110 @@
 // mirroring runSoilSense() in SoilSense.ino
 //====================================================
 
-const SERVER_URL = "http://192.168.1.103:5500/api/latest/";
+const SERVER_URL = "http://192.168.0.102:5500/api/latest/";
 const INTERVAL_MS = 5000; // how often the "device" sends data
-
-const RAINFALL_LAT = 22.5083; // Hathazari, Chattogram
-const RAINFALL_LON = 91.8083;
-const RAINFALL_START = "2025-01-01";
-const RAINFALL_END = "2025-12-31";
 
 // Fetches historical average daily rainfall once at startup (real-world reference,
 // separate from the simulated `rain` ADC value sent in each payload).
-async function getAverageRainfall() {
-    try {
-        const url =
-            `https://archive-api.open-meteo.com/v1/archive?latitude=${RAINFALL_LAT}` +
-            `&longitude=${RAINFALL_LON}&start_date=${RAINFALL_START}&end_date=${RAINFALL_END}` +
-            `&daily=precipitation_sum&timezone=auto`;
 
-        const res = await fetch(url);
-        const data = await res.json();
-        const values = data.daily.precipitation_sum.filter((v) => v !== null);
-        const avgRainfall = values.reduce((a, b) => a + b, 0) / values.length;
+const LAT = 22.5083;    // Hathazari, Chattogram
+const LON = 91.8083;
 
-        console.log("Average daily rainfall (mm):", avgRainfall.toFixed(2));
-        return avgRainfall;
-    } catch (err) {
-        console.log("⚠️  Could not fetch average rainfall:", err.message);
-        return null;
+async function getClimateData() {
+    const end = new Date();
+    end.setDate(end.getDate() - 1);
+
+    const start = new Date(end);
+    start.setFullYear(start.getFullYear() - 1);
+
+    const format = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
+
+    const url =
+        `https://power.larc.nasa.gov/api/temporal/daily/point` +
+        `?parameters=PRECTOTCORR,T2M,RH2M` +
+        `&community=AG` +
+        `&latitude=${LAT}` +
+        `&longitude=${LON}` +
+        `&start=${format(start)}` +
+        `&end=${format(end)}` +
+        `&format=JSON`;
+
+    const res = await fetch(url);
+
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
     }
+
+    const data = await res.json();
+
+    const rainfall = data.properties.parameter.PRECTOTCORR;
+    const temperature = data.properties.parameter.T2M;
+    const humidity = data.properties.parameter.RH2M;
+
+    const groups = {};
+
+    for (const date of Object.keys(rainfall)) {
+        const rain = rainfall[date];
+        const temp = temperature[date];
+        const hum = humidity[date];
+
+        if (rain === -999 || temp === -999 || hum === -999) continue;
+
+        const d = new Date(
+            Number(date.slice(0, 4)),
+            Number(date.slice(4, 6)) - 1,
+            Number(date.slice(6, 8))
+        );
+
+        const monthNames = [
+            "Jan", "Feb", "Mar",
+            "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep",
+            "Oct", "Nov", "Dec"
+        ];
+
+        const quarter = Math.floor(d.getMonth() / 3);
+
+        const startMonth = quarter * 3;
+        const endMonth = startMonth + 2;
+
+        const key = `${monthNames[startMonth]}-${monthNames[endMonth]} ${d.getFullYear()}`;
+
+        if (!groups[key]) {
+            groups[key] = {
+                rainfall: [],
+                temperature: [],
+                humidity: []
+            };
+        }
+
+        groups[key].rainfall.push(rain);
+        groups[key].temperature.push(temp);
+        groups[key].humidity.push(hum);
+    }
+
+    const result = Object.entries(groups).map(([period, values]) => ({
+        period,
+        avgRainfall: (
+            values.rainfall.reduce((a, b) => a + b, 0) /
+            values.rainfall.length
+        ).toFixed(2),
+        avgTemperature: (
+            values.temperature.reduce((a, b) => a + b, 0) /
+            values.temperature.length
+        ).toFixed(2),
+        avgHumidity: (
+            values.humidity.reduce((a, b) => a + b, 0) /
+            values.humidity.length
+        ).toFixed(2),
+    }));
+
+    return result;
 }
 
+getClimateData()
+    .then(result => console.table(result))
+    .catch(console.error);
 
 // ---- Soil calibration (matches firmware) ----
 const SOIL_DRY = 1024;
@@ -77,7 +151,7 @@ function readTestSensors() {
     return { temperature, humidity, soilValue, rainValue, phValue };
 }
 
-async function sendReading(avgRainfall) {
+async function sendReading() {
     const { temperature, humidity, soilValue, rainValue, phValue } = readTestSensors();
 
     const payload = {
@@ -92,9 +166,6 @@ async function sendReading(avgRainfall) {
     console.log("   SIMULATED SOIL SENSE (Test Mode)");
     console.log("======================================");
     console.log("Sending JSON:", JSON.stringify(payload));
-    if (avgRainfall !== null) {
-        console.log("Reference avg daily rainfall (mm):", avgRainfall.toFixed(2));
-    }
 
     try {
         const res = await fetch(SERVER_URL, {
@@ -117,11 +188,9 @@ async function main() {
     console.log(`Starting Test ESP simulator -> POST ${SERVER_URL} every ${INTERVAL_MS / 1000}s`);
     console.log("Press Ctrl+C to stop.\n");
 
-    const avgRainfall = await getAverageRainfall();
-
     // send one immediately, then on interval
-    sendReading(avgRainfall);
-    setInterval(() => sendReading(avgRainfall), INTERVAL_MS);
+    sendReading();
+    setInterval(() => sendReading(), INTERVAL_MS);
 }
 
 main();

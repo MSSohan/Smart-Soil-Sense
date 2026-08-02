@@ -24,7 +24,7 @@
 #define SOIL_DRY 1024
 #define SOIL_WET 400
 
-const char* serverUrl = "http://192.168.0.110:5500/api/latest/";
+const char* serverUrl = "http://192.168.0.102:5500/api/latest/";
 
 DHT dht(DHTPIN, DHTTYPE);
 
