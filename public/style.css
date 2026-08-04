@@ -475,6 +475,10 @@ body {
     color: var(--accent-rain);
 }
 
+[data-sensor="prediction"] .card-value {
+    color: var(--accent-moss-strong);
+}
+
 /* --- Range bar: encodes where the reading sits in its typical range --- */
 .range-bar {
     height: 6px;

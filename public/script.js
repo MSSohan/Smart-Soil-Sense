@@ -56,6 +56,7 @@ const valueEls = {
   soil_moisture: document.getElementById("value-soil_moisture"),
   ph: document.getElementById("value-ph"),
   rain: document.getElementById("value-rain"),
+  prediction: document.getElementById("value-prediction"),
 };
 
 const rangeEls = {
@@ -245,6 +246,8 @@ function updateDashboard(data) {
 
   // Timestamp
   lastUpdatedValue.textContent = formatTimestamp(data.updated);
+
+  valueEls.prediction.textContent = data.prediction ?? "--";
 }
 
 /* ------------------------------------------------------------

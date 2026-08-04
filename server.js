@@ -25,6 +25,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
+const ML_API = "http://127.0.0.1:5001/predict";
 const { DatabaseSync } = require("node:sqlite");
 
 const PORT = process.env.PORT || 5500;
@@ -152,6 +153,41 @@ function readJsonBody(req) {
     });
 }
 
+
+async function getCropPrediction(sensorData) {
+    try {
+
+        const response = await fetch(ML_API, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                soil_moisture: sensorData.soil_moisture,
+                humidity: sensorData.humidity,
+                temperature: sensorData.temperature,
+                rainfall: climateCache?.currentSeason
+                    ? Number(climateCache.currentSeason.avgRainfall)
+                    : 0,
+                ph: sensorData.ph
+            })
+        });
+
+        if (!response.ok)
+            throw new Error("Prediction API failed");
+
+        const result = await response.json();
+
+        return result.prediction;
+
+    } catch (err) {
+
+        console.error("Prediction Error:", err.message);
+
+        return "Unknown";
+    }
+}
+
 /**
  * Normalizes a date/time query param into the "YYYY-MM-DD HH:MM:SS"
  * format used in the "updated" column, so string comparison in SQL
@@ -201,6 +237,8 @@ async function handleLatestPost(req, res) {
         ph: Number(ph),
         updated: getDhakaTimestamp(),
     };
+
+    latestReading.prediction = await getCropPrediction(latestReading);
 
     insertReadingStmt.run(
         latestReading.temperature,
