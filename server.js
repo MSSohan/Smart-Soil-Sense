@@ -24,7 +24,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { exec } = require("child_process");
+const { exec, spawn } = require("child_process");
 const ML_API = "http://127.0.0.1:5001/predict";
 const { DatabaseSync } = require("node:sqlite");
 
@@ -600,6 +600,51 @@ function openBrowser(url) {
     });
 }
 
+// ----------------------------------------------------
+// Auto-start the Python ML prediction server (app.py)
+// alongside the Node server. Logs its output prefixed so
+// it's distinguishable in the console, and gets killed
+// automatically when the Node process exits.
+// ----------------------------------------------------
+const PYTHON_CMD = process.platform === "win32" ? "python" : "python3";
+const ML_SCRIPT_PATH = path.join(__dirname, "ml", "app.py"); // adjust to your actual path
+
+let pyProcess = null;
+
+function startPythonServer() {
+    pyProcess = spawn(PYTHON_CMD, [ML_SCRIPT_PATH], {
+        cwd: path.dirname(ML_SCRIPT_PATH),
+    });
+
+    pyProcess.stdout.on("data", (data) => {
+        process.stdout.write(`[ML] ${data}`);
+    });
+
+    pyProcess.stderr.on("data", (data) => {
+        process.stderr.write(`[ML] ${data}`);
+    });
+
+    pyProcess.on("close", (code) => {
+        console.log(`[ML] Python server exited with code ${code}`);
+    });
+
+    pyProcess.on("error", (err) => {
+        console.error(`[ML] Failed to start Python server: ${err.message}`);
+        console.error(`[ML] Make sure "${PYTHON_CMD}" is on your PATH, or hardcode the full python.exe path.`);
+    });
+}
+
+function stopPythonServer() {
+    if (pyProcess) {
+        pyProcess.kill();
+    }
+}
+
+// Ensure the Python process dies when Node exits, however it exits.
+process.on("exit", stopPythonServer);
+process.on("SIGINT", () => { stopPythonServer(); process.exit(); });
+process.on("SIGTERM", () => { stopPythonServer(); process.exit(); });
+
 server.listen(PORT, "0.0.0.0", () => {
     const localUrl = `http://localhost:${PORT}`;
     console.log(`Smart Soil Sense running at ${localUrl}`);
@@ -621,5 +666,6 @@ server.listen(PORT, "0.0.0.0", () => {
     refreshClimateCache();
     setInterval(refreshClimateCache, CLIMATE_CACHE_TTL_MS);
 
+    startPythonServer();
     openBrowser(localUrl);
 });

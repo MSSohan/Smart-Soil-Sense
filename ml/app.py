@@ -4,8 +4,8 @@ import pandas as pd
 
 app = Flask(__name__)
 
-model = joblib.load(r"ml\crop_model.pkl")
-label_encoder = joblib.load(r"ml\label_encoder.pkl")
+model = joblib.load("crop_model.pkl")
+label_encoder = joblib.load("label_encoder.pkl")
 
 
 @app.route("/predict", methods=["POST"])
