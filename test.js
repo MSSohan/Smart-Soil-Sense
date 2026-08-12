@@ -5,7 +5,7 @@
 // mirroring runSoilSense() in SoilSense.ino
 //====================================================
 
-const SERVER_URL = "http://192.168.0.102:5500/api/latest/";
+const SERVER_URL = "http://192.168.68.117:5500/api/latest/";
 const INTERVAL_MS = 5000; // how often the "device" sends data
 
 // Fetches historical average daily rainfall once at startup (real-world reference,
